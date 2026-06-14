@@ -1,21 +1,4 @@
-name: Live Endpoint Listener
-
-on:
-  workflow_dispatch: # Allows you to start it manually from the Actions tab
-
-jobs:
-  run-server:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Generate SSH Key for Tunneling
-        run: |
-          mkdir -p ~/.ssh
-          ssh-keygen -t rsa -b 2048 -N "" -f ~/.ssh/id_rsa
-
-          # Clear out any old background processes if running
-          sudo killall python3 || true 
-
-      - name: Start Python Server
+- name: Start Python Server
         run: |
           cat << 'EOF' > server.py
           from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -33,17 +16,15 @@ jobs:
                   self.end_headers()
                   self.wfile.write(b"Text successfully sent to GitHub terminal!")
 
+              def do_GET(self):
+                  # This handles browser visits gracefully instead of throwing a 501
+                  self.send_response(200)
+                  self.send_header("Content-type", "text/plain")
+                  self.end_headers()
+                  self.wfile.write(b"The endpoint is live and active! Use POST to send terminal logs.")
+
           print("Starting server on port 8080...", flush=True)
           HTTPServer(('0.0.0.0', 8080), Listener).serve_forever()
           EOF
           python3 server.py &
           sleep 2
-
-      - name: Open Public Tunnel & Listen
-        run: |
-          echo "=============================================================="
-          echo "LOOK BELOW FOR YOUR PUBLIC URL (it ends in .lhr.life)"
-          echo "=============================================================="
-          
-          # This starts the public tunnel and keeps the workflow running/listening
-          ssh -o StrictHostKeyChecking=no -R 80:localhost:8080 nokey@localhost.run
