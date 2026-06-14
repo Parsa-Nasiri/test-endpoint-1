@@ -7,24 +7,26 @@ jobs:
   deploy-proxy:
     runs-on: ubuntu-latest
     steps:
-      - name: Generate SSH Key & Install Dependencies
+      - name: Generate Keys & Install Dependencies
         run: |
           mkdir -p ~/.ssh
           ssh-keygen -t rsa -b 2048 -N "" -f ~/.ssh/id_rsa
           sudo apt-get update && sudo apt-get install -y nginx unzip curl
           sudo killall nginx python3 xray || true
 
-      - name: Configure and Start Xray Core (VLESS Engine)
+      - name: Configure and Start Xray Core (With Live Traffic Logs)
         run: |
-          # Download official Xray-core binary
           curl -L -o xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip
           unzip -o xray.zip xray
           chmod +x xray
 
-          # Create a custom VLESS inbound configuration over WebSockets
+          # Changed loglevel to "info" so you see traffic updates in the GitHub terminal
           cat << 'EOF' > xray_config.json
           {
-            "log": { "loglevel": "warning" },
+            "log": { 
+              "access": "/tmp/xray_access.log",
+              "loglevel": "info" 
+            },
             "inbounds": [
               {
                 "port": 8082,
@@ -51,53 +53,62 @@ jobs:
           }
           EOF
 
-          # Run Xray core in the background
           ./xray -c xray_config.json &
           sleep 2
 
-      - name: Configure and Start Python Dashboard Layout
+      - name: Configure and Start Dynamic Dashboard
         run: |
+          # This script reads the domain name dynamically from a local file
           cat << 'EOF' > server.py
           from http.server import HTTPServer, BaseHTTPRequestHandler
+          import os
 
           class DashboardHandler(BaseHTTPRequestHandler):
               def do_GET(self):
+                  current_domain = "localhost"
+                  if os.path.exists("domain.txt"):
+                      with open("domain.txt", "r") as f:
+                          current_domain = f.read().strip()
+                  
+                  # Clean up protocol elements if present
+                  current_domain = current_domain.replace("https://", "").replace("http://", "")
+                  
                   self.send_response(200)
                   self.send_header("Content-type", "text/html")
                   self.end_headers()
                   
-                  # The unified VLESS secure string layout
-                  vless_config = "vless://ba3965b3-7642-4f3d-82b5-cc1a16616233@parsa-nasiri-endpoint.serveo.net:443?encryption=none&security=tls&type=ws&host=parsa-nasiri-endpoint.serveo.net&path=%2Fvless#GitHub-Runner-VLESS"
+                  # Assembles the precise, random VLESS string automatically
+                  vless_config = f"vless://ba3965b3-7642-4f3d-82b5-cc1a16616233@{current_domain}:443?encryption=none&security=tls&type=ws&host={current_domain}&path=%2Fvless#GitHub-Dynamic-VLESS"
                   
                   html = f"""
                   <!DOCTYPE html>
                   <html>
                   <head>
                       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                      <title>VLESS Config Dashboard</title>
+                      <title>Dynamic VLESS Config Dashboard</title>
                       <style>
                           body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #0f0f11; color: #e4e4e7; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 80vh; margin: 0; }}
                           .card {{ background: #18181b; border: 1px solid #27272a; border-radius: 12px; padding: 28px; max-width: 480px; width: 100%; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3); }}
-                          h1 {{ font-size: 1.5rem; margin-top: 0; color: #10b981; font-weight: 600; text-align: center; }}
+                          h1 {{ font-size: 1.5rem; margin-top: 0; color: #3b82f6; font-weight: 600; text-align: center; }}
                           p {{ color: #a1a1aa; font-size: 0.9rem; line-height: 1.5; text-align: center; margin-bottom: 20px; }}
-                          textarea {{ width: 100%; height: 110px; background: #09090b; color: #34d399; border: 1px solid #3f3f46; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.85rem; resize: none; box-sizing: border-box; }}
-                          button {{ width: 100%; background: #10b981; color: #ffffff; border: none; padding: 12px; font-size: 0.95rem; font-weight: 500; margin-top: 16px; cursor: pointer; border-radius: 6px; transition: background 0.2s; }}
-                          button:hover {{ background: #059669; }}
+                          textarea {{ width: 100%; height: 110px; background: #09090b; color: #60a5fa; border: 1px solid #3f3f46; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 0.85rem; resize: none; box-sizing: border-box; }}
+                          button {{ width: 100%; background: #3b82f6; color: #ffffff; border: none; padding: 12px; font-size: 0.95rem; font-weight: 500; margin-top: 16px; cursor: pointer; border-radius: 6px; transition: background 0.2s; }}
+                          button:hover {{ background: #2563eb; }}
                       </style>
                   </head>
                   <body>
                       <div class="card">
                           <h1>VLESS Connection Node</h1>
-                          <p>Copy the configuration below and import it directly into your proxy client app (v2rayNG, Nekobox, or Shadowrocket).</p>
+                          <p>This config profile updates instantly to match your dynamic runner domain name.</p>
                           <textarea id="config" readonly>{vless_config}</textarea>
-                          <button onclick="navigator.clipboard.writeText(document.getElementById('config').value); alert('Configuration copied to clipboard!');">Copy Configuration</button>
+                          <button onclick="navigator.clipboard.writeText(document.getElementById('config').value); alert('Dynamic config copied!');">Copy Configuration</button>
                       </div>
                   </body>
                   </html>
                   """
                   self.wfile.write(html.encode('utf-8'))
 
-          print("Starting dashboard layout backend on port 8081...", flush=True)
+          print("Starting dynamic backend on port 8081...", flush=True)
           HTTPServer(('127.0.0.1', 8081), DashboardHandler).serve_forever()
           EOF
           
@@ -106,7 +117,6 @@ jobs:
 
       - name: Configure and Start Nginx Reverse Proxy
         run: |
-          # Fixed: Added custom paths for error_log and access_log inside writable /tmp directories
           cat << 'EOF' > nginx.conf
           pid /tmp/nginx.pid;
           error_log /tmp/nginx_error.log;
@@ -114,7 +124,6 @@ jobs:
           events { worker_connections 1024; }
           http {
               access_log /tmp/nginx_access.log;
-              
               client_body_temp_path /tmp/client_body;
               proxy_temp_path /tmp/proxy_temp;
               fastcgi_temp_path /tmp/fastcgi_temp;
@@ -124,14 +133,12 @@ jobs:
               server {
                   listen 8080;
                   
-                  # Route root web traffic to the Dashboard page
                   location / {
                       proxy_pass http://127.0.0.1:8081;
                       proxy_set_header Host $host;
                       proxy_set_header X-Real-IP $remote_addr;
                   }
 
-                  # Route VLESS WebSocket handshakes securely to Xray
                   location /vless {
                       proxy_redirect off;
                       proxy_pass http://127.0.0.1:8082;
@@ -149,11 +156,26 @@ jobs:
           nginx -c $(pwd)/nginx.conf
           sleep 2
 
-      - name: Open Fixed Public Tunnel Endpoint
+      - name: Launch Tunnel, Auto-Detect Domain, and Keep Server Running
         run: |
-          echo "=============================================================="
-          echo "DASHBOARD LAYOUT URL: https://parsa-nasiri-endpoint.serveo.net"
-          echo "=============================================================="
+          # 1. Connect to Serveo without requiring custom domains, pipe output to a log file
+          ssh -o StrictHostKeyChecking=no -R 80:localhost:8080 serveo.net > serveo.log 2>&1 &
           
-          # Establishing connection via Serveo using the temporary runtime identity key
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -R parsa-nasiri-endpoint:80:localhost:8080 serveo.net
+          # 2. Watch the log until Serveo spits out the random URL, then isolate it
+          echo "Syncing tunnel connection..."
+          for i in {1..20}; do
+            if grep -q "Forwarding HTTP traffic from" serveo.log; then
+              ASSIGNED_URL=$(grep -oE "https://[a-zA-Z0-9.-]+" serveo.log | head -n 1)
+              echo "$ASSIGNED_URL" > domain.txt
+              echo "=============================================================="
+              echo "SUCCESS! VISIT THIS URL ON YOUR PHONE TO GET YOUR CONFIG:"
+              echo "$ASSIGNED_URL"
+              echo "=============================================================="
+              break
+            fi
+            sleep 1
+          done
+          
+          # 3. Stream Xray connection logs live in the terminal runner so you can track updates
+          touch /tmp/xray_access.log
+          tail -f /tmp/xray_access.log
