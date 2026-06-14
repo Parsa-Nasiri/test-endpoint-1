@@ -1,50 +1,49 @@
-name: Keep-Alive Endpoint Server
+name: Live Endpoint Listener
 
-on: [workflow_dispatch, push]
+on:
+  workflow_dispatch: # Allows you to start it manually from the Actions tab
 
 jobs:
-  live-server:
+  run-server:
     runs-on: ubuntu-latest
     steps:
-      - name: Start Background HTTP Server
+      - name: Generate SSH Key for Tunneling
         run: |
-          python3 -c "
+          mkdir -p ~/.ssh
+          ssh-keygen -t rsa -b 2048 -N "" -f ~/.ssh/id_rsa
+
+          # Clear out any old background processes if running
+          sudo killall python3 || true 
+
+      - name: Start Python Server
+        run: |
+          cat << 'EOF' > server.py
           from http.server import HTTPServer, BaseHTTPRequestHandler
           import sys
+
           class Listener(BaseHTTPRequestHandler):
               def do_POST(self):
                   content_length = int(self.headers['Content-Length'])
                   data = self.rfile.read(content_length).decode('utf-8')
-                  print(f'\n[ENDPOINT LOG]: {data}\n', flush=True)
+                  print(f"\n==================================================")
+                  print(f"[RECEIVED TEXT]: {data}")
+                  print(f"==================================================\n", flush=True)
                   self.send_response(200)
+                  self.send_header("Content-type", "text/plain")
                   self.end_headers()
-          print('Starting server on port 8080...', flush=True)
+                  self.wfile.write(b"Text successfully sent to GitHub terminal!")
+
+          print("Starting server on port 8080...", flush=True)
           HTTPServer(('0.0.0.0', 8080), Listener).serve_forever()
-          " &
+          EOF
+          python3 server.py &
           sleep 2
 
-      - name: Expose Server & Wait Indefinitely
-        env:
-          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+      - name: Open Public Tunnel & Listen
         run: |
-          # Install ngrok
-          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null
-          echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-          sudo apt-get update && sudo apt-get install ngrok
+          echo "=============================================================="
+          echo "LOOK BELOW FOR YOUR PUBLIC URL (it ends in .lhr.life)"
+          echo "=============================================================="
           
-          # Connect and start tunnel
-          ngrok config add-authtoken $NGROK_AUTH_TOKEN
-          ngrok http 8080 --log=stdout &
-          sleep 5
-          
-          # Fetch and output the public URL to the terminal
-          echo "--------------------------------------------------------"
-          echo "YOUR PUBLIC ENDPOINT URL IS:"
-          curl -s http://localhost:4040/api/tunnels | jq -r '.tunnels[0].public_url'
-          echo "--------------------------------------------------------"
-          
-          # Keep-alive loop to prevent the job from finishing
-          echo "Listening for incoming texts. Press 'Cancel workflow' to stop manually."
-          while true; do
-            sleep 10
-          done
+          # This starts the public tunnel and keeps the workflow running/listening
+          ssh -o StrictHostKeyChecking=no -R 80:localhost:8080 nokey@localhost.run
