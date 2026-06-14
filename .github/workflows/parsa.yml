@@ -1,0 +1,37 @@
+name: Run Local Endpoint Test
+
+on: [push, workflow_dispatch]
+
+jobs:
+  run-endpoint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start Local HTTP Server in Background
+        run: |
+          # Create a quick Python script that prints POST data
+          cat << 'EOF' > server.py
+          from http.server import HTTPServer, BaseHTTPRequestHandler
+          import sys
+
+          class RequestHandler(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  content_length = int(self.headers['Content-Length'])
+                  post_data = self.rfile.read(content_length).decode('utf-8')
+                  print(f"\n[RECEIVED TEXT]: {post_data}\n", flush=True)
+                  self.send_response(200)
+                  self.end_headers()
+                  self.wfile.write(b"Success")
+
+          sys.stdout.flush()
+          HTTPServer(('localhost', 8080), RequestHandler).serve_forever()
+          EOF
+
+          # Run the server in the background and give it a second to boot
+          python3 server.py &
+          sleep 2
+
+      - name: Send Text to Endpoint
+        run: |
+          curl -X POST http://localhost:8080 \
+            -H "Content-Type: text/plain" \
+            -d "Hello from the GitHub Actions terminal! This text will show up above."
