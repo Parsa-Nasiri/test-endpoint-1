@@ -9,30 +9,32 @@ jobs:
     steps:
       - name: Start Server and Open Fixed Tunnel
         run: |
+          # 1. Generate a temporary SSH key so Serveo allows the custom subdomain
+          mkdir -p ~/.ssh
+          ssh-keygen -t rsa -b 2048 -N "" -f ~/.ssh/id_rsa
+          sudo killall python3 || true 
+
+          # 2. Write the Python server script
           cat << 'EOF' > server.py
           from http.server import HTTPServer, BaseHTTPRequestHandler
           import sys
 
           class Listener(BaseHTTPRequestHandler):
               def do_POST(self):
-                  # 1. Read incoming text data from your local machine
                   content_length = int(self.headers['Content-Length'])
                   data = self.rfile.read(content_length).decode('utf-8')
                   
                   print("\n==================================================", flush=True)
                   print(f"[RECEIVED FROM LOCAL]: {data}", flush=True)
                   
-                  # 2. PROCESS THE REQUEST DATA HERE
-                  # (As an example, this turns your text uppercase and reverses it)
+                  # PROCESS THE REQUEST DATA HERE
                   processed_data = data.upper()[::-1]
                   
-                  # 3. Formulate the response payload to send back
                   response_to_local = f"GitHub Processed Result: {processed_data}"
                   
                   print(f"[SENT BACK TO LOCAL]: {response_to_local}", flush=True)
                   print("==================================================\n", flush=True)
 
-                  # 4. Send response back to your local terminal
                   self.send_response(200)
                   self.send_header("Content-type", "text/plain")
                   self.end_headers()
@@ -48,7 +50,7 @@ jobs:
           HTTPServer(('0.0.0.0', 8080), Listener).serve_forever()
           EOF
           
-          # Run the server in the background
+          # 3. Run the Python server in the background
           python3 server.py &
           sleep 2
           
@@ -56,5 +58,5 @@ jobs:
           echo "YOUR FIXED ENDPOINT URL IS: https://parsa-nasiri-endpoint.serveo.net"
           echo "=============================================================="
           
-          # Connect to Serveo and request the custom subdomain
-          ssh -o StrictHostKeyChecking=no -R parsa-nasiri-endpoint:80:localhost:8080 serveo.net
+          # 4. Connect to Serveo passing our newly generated identity key
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -R parsa-nasiri-endpoint:80:localhost:8080 serveo.net
