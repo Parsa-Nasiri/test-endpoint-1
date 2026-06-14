@@ -13,7 +13,7 @@ jobs:
           ssh-keygen -t rsa -b 2048 -N "" -f ~/.ssh/id_rsa
           sudo killall python3 || true 
 
-      - name: Start Python Server
+      - name: Start Server and Open Tunnel
         run: |
           cat << 'EOF' > server.py
           from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -23,9 +23,9 @@ jobs:
               def do_POST(self):
                   content_length = int(self.headers['Content-Length'])
                   data = self.rfile.read(content_length).decode('utf-8')
-                  print(f"\n==================================================")
-                  print(f"[RECEIVED TEXT]: {data}")
-                  print(f"==================================================\n", flush=True)
+                  print("\n==================================================", flush=True)
+                  print(f"[RECEIVED TEXT]: {data}", flush=True)
+                  print("==================================================\n", flush=True)
                   self.send_response(200)
                   self.send_header("Content-type", "text/plain")
                   self.end_headers()
@@ -40,12 +40,14 @@ jobs:
           print("Starting server on port 8080...", flush=True)
           HTTPServer(('0.0.0.0', 8080), Listener).serve_forever()
           EOF
+          
+          # Start the Python server in the background inside this step
           python3 server.py &
           sleep 2
-
-      - name: Open Public Tunnel & Listen
-        run: |
+          
           echo "=============================================================="
           echo "LOOK BELOW FOR YOUR PUBLIC URL (it ends in .lhr.life)"
           echo "=============================================================="
+          
+          # Run the tunnel in the foreground of the same step so logs stream correctly
           ssh -o StrictHostKeyChecking=no -R 80:localhost:8080 nokey@localhost.run
